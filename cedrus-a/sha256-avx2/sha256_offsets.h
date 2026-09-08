@@ -1,0 +1,1 @@
+#include "../ref/sha256_offsets.h"

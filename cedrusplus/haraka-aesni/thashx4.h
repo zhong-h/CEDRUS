@@ -1,0 +1,1 @@
+#include "../shake-avx2/thashx4.h"

@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "merkle.h": "c",
+        "hashx4.h": "c",
+        "limits.h": "c",
+        "time.h": "c"
+    }
+}

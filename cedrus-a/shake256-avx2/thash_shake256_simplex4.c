@@ -1,0 +1,159 @@
+#include <stdint.h>
+#include <string.h>
+
+#include "thashx4.h"
+#include "address.h"
+#include "params.h"
+
+#include "fips202x4.h"
+
+extern void KeccakP1600times4_PermuteAll_24rounds(__m256i *s);
+
+/**
+ * 4-way parallel version of thash; takes 4x as much input and output
+ */
+void thashx4(unsigned char *out0,
+             unsigned char *out1,
+             unsigned char *out2,
+             unsigned char *out3,
+             const unsigned char *in0,
+             const unsigned char *in1,
+             const unsigned char *in2,
+             const unsigned char *in3, unsigned int inblocks,
+             const unsigned char *pub_seed, uint32_t addrx4[4*8])
+{
+    if (CDS_N <= 32 && (inblocks == 1 || inblocks == 2)) {
+        /* As we write and read only a few quadwords, it is more efficient to
+         * build and extract from the fourway SHAKE256 state by hand. */
+        __m256i state[25];
+        for (int i = 0; i < CDS_N/8; i++) {
+            state[i] = _mm256_set1_epi64x(((int64_t*)pub_seed)[i]);
+        }
+        for (int i = 0; i < 4; i++) {
+            state[CDS_N/8+i] = _mm256_set_epi32(
+                addrx4[3*8+1+2*i],
+                addrx4[3*8+2*i],
+                addrx4[2*8+1+2*i],
+                addrx4[2*8+2*i],
+                addrx4[8+1+2*i],
+                addrx4[8+2*i],
+                addrx4[1+2*i],
+                addrx4[2*i]
+            );
+        }
+
+        for (unsigned int i = 0; i < (CDS_N/8) * inblocks; i++) {
+            state[CDS_N/8+4+i] = _mm256_set_epi64x(
+                        ((int64_t*)in3)[i],
+                        ((int64_t*)in2)[i],
+                        ((int64_t*)in1)[i],
+                        ((int64_t*)in0)[i]
+                    );
+        }
+
+        /* Domain separator and padding. */
+        for (int i = (CDS_N/8)*(1+inblocks)+4; i < 16; i++) {
+            state[i] = _mm256_set1_epi64x(0);
+        }
+        state[16] = _mm256_set1_epi64x(0x80ll << 56);
+        state[(CDS_N/8)*(1+inblocks)+4] = _mm256_xor_si256(
+            state[(CDS_N/8)*(1+inblocks)+4],
+            _mm256_set1_epi64x(0x1f)
+        );
+        for (int i = 17; i < 25; i++) {
+            state[i] = _mm256_set1_epi64x(0);
+        }
+
+        KeccakP1600times4_PermuteAll_24rounds(&state[0]);
+
+        for (int i = 0; i < CDS_N/8; i++) {
+            ((int64_t*)out0)[i] = _mm256_extract_epi64(state[i], 0);
+            ((int64_t*)out1)[i] = _mm256_extract_epi64(state[i], 1);
+            ((int64_t*)out2)[i] = _mm256_extract_epi64(state[i], 2);
+            ((int64_t*)out3)[i] = _mm256_extract_epi64(state[i], 3);
+        }
+    } else if (CDS_N == 64 && (inblocks == 1 || inblocks == 2)) {
+        /* As we write and read only a few quadwords, it is more efficient to
+         * build and extract from the fourway SHAKE256 state by hand. */
+        __m256i state[25];
+        for (int i = 0; i < 8; i++) {
+            state[i] = _mm256_set1_epi64x(((int64_t*)pub_seed)[i]);
+        }
+        for (int i = 0; i < 4; i++) {
+            state[8+i] = _mm256_set_epi32(
+                addrx4[3*8+1+2*i],
+                addrx4[3*8+2*i],
+                addrx4[2*8+1+2*i],
+                addrx4[2*8+2*i],
+                addrx4[8+1+2*i],
+                addrx4[8+2*i],
+                addrx4[1+2*i],
+                addrx4[2*i]
+            );
+        }
+
+        for (int i = 17; i < 25; i++) {
+            state[i] = _mm256_set1_epi64x(0);
+        }
+
+        /* We will won't be able to fit all input in on go. */
+        for (unsigned int i = 0; i < 5; i++) {
+            state[8+4+i] = _mm256_set_epi64x(
+                ((int64_t*)in3)[i],
+                ((int64_t*)in2)[i],
+                ((int64_t*)in1)[i],
+                ((int64_t*)in0)[i]
+            );
+        }
+
+        KeccakP1600times4_PermuteAll_24rounds(&state[0]);
+
+        /* Final input. */
+        for (unsigned int i = 0; i < 3+8*(inblocks-1); i++) {
+            state[i] = _mm256_xor_si256(
+                state[i],
+                _mm256_set_epi64x(
+                    ((int64_t*)in3)[i+5],
+                    ((int64_t*)in2)[i+5],
+                    ((int64_t*)in1)[i+5],
+                    ((int64_t*)in0)[i+5]
+                )
+            );
+        }
+
+        /* Domain separator and padding. */
+        state[3+8*(inblocks-1)] = _mm256_xor_si256(state[3+8*(inblocks-1)],
+                _mm256_set1_epi64x(0x1f));
+        state[16] = _mm256_xor_si256(state[16], _mm256_set1_epi64x(0x80ll << 56));
+
+        KeccakP1600times4_PermuteAll_24rounds(&state[0]);
+
+        for (int i = 0; i < 8; i++) {
+            ((int64_t*)out0)[i] = _mm256_extract_epi64(state[i], 0);
+            ((int64_t*)out1)[i] = _mm256_extract_epi64(state[i], 1);
+            ((int64_t*)out2)[i] = _mm256_extract_epi64(state[i], 2);
+            ((int64_t*)out3)[i] = _mm256_extract_epi64(state[i], 3);
+        }
+    } else {
+        unsigned char buf0[CDS_N + CDS_ADDR_BYTES + inblocks*CDS_N];
+        unsigned char buf1[CDS_N + CDS_ADDR_BYTES + inblocks*CDS_N];
+        unsigned char buf2[CDS_N + CDS_ADDR_BYTES + inblocks*CDS_N];
+        unsigned char buf3[CDS_N + CDS_ADDR_BYTES + inblocks*CDS_N];
+
+        memcpy(buf0, pub_seed, CDS_N);
+        memcpy(buf1, pub_seed, CDS_N);
+        memcpy(buf2, pub_seed, CDS_N);
+        memcpy(buf3, pub_seed, CDS_N);
+        memcpy(buf0 + CDS_N, addrx4 + 0*8, CDS_ADDR_BYTES);
+        memcpy(buf1 + CDS_N, addrx4 + 1*8, CDS_ADDR_BYTES);
+        memcpy(buf2 + CDS_N, addrx4 + 2*8, CDS_ADDR_BYTES);
+        memcpy(buf3 + CDS_N, addrx4 + 3*8, CDS_ADDR_BYTES);
+        memcpy(buf0 + CDS_N + CDS_ADDR_BYTES, in0, inblocks * CDS_N);
+        memcpy(buf1 + CDS_N + CDS_ADDR_BYTES, in1, inblocks * CDS_N);
+        memcpy(buf2 + CDS_N + CDS_ADDR_BYTES, in2, inblocks * CDS_N);
+        memcpy(buf3 + CDS_N + CDS_ADDR_BYTES, in3, inblocks * CDS_N);
+
+        shake256x4(out0, out1, out2, out3, CDS_N,
+                   buf0, buf1, buf2, buf3, CDS_N + CDS_ADDR_BYTES + inblocks*CDS_N);
+    }
+}

@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "params.h": "c",
+        "haraka.h": "c",
+        "context.h": "c"
+    }
+}

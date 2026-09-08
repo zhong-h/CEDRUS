@@ -1,0 +1,1 @@
+#include "../ref/thash_sha256_simple.c"
